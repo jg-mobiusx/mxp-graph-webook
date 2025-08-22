@@ -4,7 +4,7 @@
     "private": true,
     "scripts": {
         "dev": "vercel dev",
-        "build": "vercel build"
+        "build": "echo 'No build step needed for serverless functions'"
     },
     "dependencies": {
         "@aws-sdk/client-s3": "^3.620.0",
