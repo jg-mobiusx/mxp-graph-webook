@@ -1,7 +1,7 @@
 // Create Microsoft Graph webhook subscription
 require('dotenv').config();
 const { ConfidentialClientApplication } = require('@azure/msal-node');
-const fetch = require('node-fetch');
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 const msalApp = new ConfidentialClientApplication({
   auth: {

@@ -1,6 +1,6 @@
 // api/graph-webhook.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import fetch from 'node-fetch';
+const fetch = require('node-fetch');
 import { ConfidentialClientApplication } from '@azure/msal-node';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
@@ -86,7 +86,7 @@ async function getAttachments(messageId: string, token: string) {
   const user = encodeURIComponent(M365_SHARED_MAILBOX || 'me');
   const url = `${base}/users/${user}/messages/${messageId}/attachments?$select=id,name,contentType,size,@odata.type,contentBytes`;
   const json = await graphGet(url, token);
-  return json.value || [];
+  return (json as any).value || [];
 }
 
 function b64ToBuffer(b64: string): Buffer {
@@ -135,7 +135,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const messageId = n.resourceData?.id;
       if (!messageId) continue;
 
-      const msg = await getMessage(messageId, token);
+      const msg = await getMessage(messageId, token) as any;
       if (!msg?.hasAttachments) continue;
 
       const attachments = await getAttachments(messageId, token);
