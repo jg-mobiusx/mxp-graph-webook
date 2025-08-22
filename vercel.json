@@ -3,5 +3,6 @@
     "api/graph-webhook.ts": {
       "runtime": "@vercel/node@3.0.0"
     }
-  }
+  },
+  "buildCommand": null
 }
