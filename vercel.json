@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/graph-webhook.ts": {
+      "runtime": "@vercel/node"
+    }
+  }
+}

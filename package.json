@@ -3,8 +3,7 @@
     "version": "1.0.0",
     "private": true,
     "scripts": {
-        "dev": "vercel dev",
-        "build": "echo 'No build step needed for serverless functions'"
+        "dev": "vercel dev"
     },
     "dependencies": {
         "@aws-sdk/client-s3": "^3.620.0",
