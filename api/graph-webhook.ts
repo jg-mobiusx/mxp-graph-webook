@@ -1,6 +1,6 @@
 // api/graph-webhook.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-const fetch = require('node-fetch');
+import fetch from 'node-fetch';
 import { ConfidentialClientApplication } from '@azure/msal-node';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
