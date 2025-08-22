@@ -1,0 +1,19 @@
+{
+    "name": "m365-docai-webhook",
+    "version": "1.0.0",
+    "private": true,
+    "scripts": {
+        "dev": "vercel dev",
+        "build": "vercel build"
+    },
+    "dependencies": {
+        "@aws-sdk/client-s3": "^3.620.0",
+        "@azure/msal-node": "^2.6.6",
+        "dotenv": "^17.2.1",
+        "node-fetch": "^3.3.2"
+    },
+    "devDependencies": {
+        "@vercel/node": "^3.0.0",
+        "typescript": "^5.9.2"
+    }
+}
