@@ -3,19 +3,24 @@
     "version": "1.0.0",
     "private": true,
     "scripts": {
-        "dev": "vercel dev"
     },
     "engines": {
         "node": "22.x"
     },
+    "overrides": {
+        "esbuild": "^0.25.9",
+        "path-to-regexp": "^8.2.0",
+        "undici": "^7.15.0"
+    },
     "dependencies": {
         "@aws-sdk/client-s3": "^3.620.0",
+        "@aws-sdk/client-sqs": "^3.873.0",
         "@azure/msal-node": "^2.6.6",
         "dotenv": "^17.2.1",
         "node-fetch": "^3.3.2"
     },
     "devDependencies": {
-        "@vercel/node": "^3.0.0",
+        "@vercel/node": "^5.3.13",
         "typescript": "^5.9.2"
     }
 }
