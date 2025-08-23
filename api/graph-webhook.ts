@@ -1,6 +1,6 @@
 // api/graph-webhook.ts
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-import fetch from 'node-fetch';
+import { VercelRequest, VercelResponse } from '@vercel/node';
+import * as crypto from 'crypto';
 import { ConfidentialClientApplication } from '@azure/msal-node';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
@@ -54,23 +54,21 @@ async function putToR2(key: string, body: Buffer, contentType?: string) {
 }
 
 // --- Graph helpers ---
-async function graphGet(url: string, token: string) {
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!r.ok) {
-    const t = await r.text();
-    throw new Error(`Graph GET ${url} ${r.status}: ${t}`);
-  }
-  return r.json();
+async function graphGet(url: string, token: string): Promise<any> {
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!res.ok) throw new Error(`Graph API error: ${res.status}`);
+  return res.json();
 }
 
 async function graphGetBytes(url: string, token: string): Promise<Buffer> {
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!r.ok) {
-    const t = await r.text();
-    throw new Error(`Graph GET (bytes) ${url} ${r.status}: ${t}`);
-  }
-  const arrayBuf = await r.arrayBuffer();
-  return Buffer.from(arrayBuf);
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!res.ok) throw new Error(`Graph API error: ${res.status}`);
+  const arrayBuffer = await res.arrayBuffer();
+  return Buffer.from(arrayBuffer);
 }
 
 // Fetch message details (optionally constrained to a shared mailbox)
@@ -84,9 +82,9 @@ async function getMessage(messageId: string, token: string) {
 async function getAttachments(messageId: string, token: string) {
   const base = `https://graph.microsoft.com/v1.0`;
   const user = encodeURIComponent(M365_SHARED_MAILBOX || 'me');
-  const url = `${base}/users/${user}/messages/${messageId}/attachments?$select=id,name,contentType,size,@odata.type,contentBytes`;
-  const json = await graphGet(url, token);
-  return (json as any).value || [];
+  const url = `${base}/users/${user}/messages/${messageId}/attachments`;
+  const res = await graphGet(url, token);
+  return res.value || [];
 }
 
 function b64ToBuffer(b64: string): Buffer {
@@ -94,15 +92,71 @@ function b64ToBuffer(b64: string): Buffer {
 }
 
 // --- Webhook handler ---
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // 1) Validation handshake (GET): echo validationToken
-  if (req.method === 'GET') {
-    const token = req.query['validationToken'];
-    if (token) {
-      // Must respond with text/plain within 10 seconds (fact)
-      res.setHeader('Content-Type', 'text/plain');
-      return res.status(200).send(token as string);
+async function processNotification(n: any, token: string) {
+  console.log('Processing notification:', JSON.stringify(n, null, 2));
+  const messageId = n.resourceData?.id;
+  if (typeof messageId !== 'string' || !messageId) {
+    console.log('Invalid or missing message ID, skipping');
+    return;
+  }
+
+  // Fetch message and attachments
+  const [msg, attachments] = await Promise.all([
+    getMessage(messageId, token),
+    getAttachments(messageId, token),
+  ]);
+
+  if (!msg?.hasAttachments || !attachments?.length) {
+    console.log(`Message ${messageId} has no attachments, skipping`);
+    return;
+  }
+
+  console.log(`Processing ${attachments.length} attachment(s) for message ${messageId}`);
+  const attachmentPromises = attachments.map(async (att: any) => {
+    if (att['@odata.type'] !== '#microsoft.graph.fileAttachment') {
+      console.log('Skipping non-file attachment:', att.name);
+      return;
     }
+
+    let data: Buffer;
+    if (att.contentBytes) {
+      data = b64ToBuffer(att.contentBytes);
+      console.log('Small attachment decoded:', att.name, 'size:', data.length);
+    } else {
+      const base = `https://graph.microsoft.com/v1.0`;
+      const user = encodeURIComponent(M365_SHARED_MAILBOX || 'me');
+      const url = `${base}/users/${user}/messages/${msg.id}/attachments/${att.id}/$value`;
+      data = await graphGetBytes(url, token);
+      console.log('Large attachment fetched:', att.name, 'size:', data.length);
+    }
+
+    const date = (msg.receivedDateTime || new Date().toISOString()).slice(0, 10);
+    const key = `${date}/${msg.id}/${att.name}`;
+    await putToR2(key, data, att.contentType);
+    console.log(`✅ Stored ${key} (${att.size} bytes)`);
+  });
+
+  await Promise.all(attachmentPromises);
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Log all requests for debugging
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  console.log('Query params:', req.query);
+  console.log('Headers:', req.headers);
+
+  // 1) Webhook validation (GET or POST request with validationToken)
+  const validationToken = req.query['validationToken'];
+  if (validationToken) {
+    console.log('Validation token received:', validationToken);
+    // Must respond with text/plain within 10 seconds (fact)
+    res.setHeader('Content-Type', 'text/plain');
+    console.log('Responding with validation token:', validationToken);
+    return res.status(200).send(validationToken as string);
+  }
+
+  if (req.method === 'GET') {
+    console.log('GET request without validation token');
     return res.status(400).json({ error: 'Missing validationToken' });
   }
 
@@ -113,64 +167,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 2) Notification payload
   // Graph sends: { value: [{ subscriptionId, clientState, resource, resourceData: { id, ... } }, ...] }
   const body = req.body as any;
+  console.log('Request body received. Processing value array...');
+  
   if (!body?.value?.length) {
     // Graph may ping with empty arrays; respond 202 to acknowledge (fact)
+    console.log('Empty notification payload, responding 202');
     return res.status(202).end();
   }
 
   // Validate clientState on every item
   for (const n of body.value) {
-    if (GRAPH_WEBHOOK_CLIENT_STATE && n.clientState !== GRAPH_WEBHOOK_CLIENT_STATE) {
+    // Only validate if we have a clientState configured AND the notification has one
+    if (GRAPH_WEBHOOK_CLIENT_STATE && n.clientState && n.clientState !== GRAPH_WEBHOOK_CLIENT_STATE) {
       // Reject if mismatch (fact: required to prevent spoofing)
-      return res.status(401).json({ error: 'Invalid clientState' });
+      const expected = GRAPH_WEBHOOK_CLIENT_STATE!;
+      const actual = n.clientState;
+      if (expected.length !== actual.length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(actual))) {
+        console.log('ClientState mismatch. Expected:', GRAPH_WEBHOOK_CLIENT_STATE, 'Got:', n.clientState);
+        return res.status(401).json({ error: 'Invalid clientState' });
+      }
     }
+    console.log('ClientState validation passed. Expected:', GRAPH_WEBHOOK_CLIENT_STATE, 'Got:', n.clientState);
   }
 
   // 3) Process notifications (best effort, quick return)
   // **[extrapolation]**: Process inline; for heavy work, enqueue to a queue.
   try {
+    console.log('Getting Graph token...');
     const token = await getGraphToken();
-
-    for (const n of body.value) {
-      const messageId = n.resourceData?.id;
-      if (!messageId) continue;
-
-      const msg = await getMessage(messageId, token) as any;
-      if (!msg?.hasAttachments) continue;
-
-      const attachments = await getAttachments(messageId, token);
-
-      for (const att of attachments) {
-        if (att['@odata.type'] === '#microsoft.graph.fileAttachment') {
-          // Small fileAttachment includes base64 in contentBytes (fact)
-          const buf = att.contentBytes ? b64ToBuffer(att.contentBytes) : null;
-
-          // **[extrapolation]**: If null or large, fall back to /attachments/{id}/$value
-          let data = buf;
-          if (!data) {
-            const base = `https://graph.microsoft.com/v1.0`;
-            const user = encodeURIComponent(M365_SHARED_MAILBOX || 'me');
-            const url = `${base}/users/${user}/messages/${msg.id}/attachments/${att.id}/$value`;
-            data = await graphGetBytes(url, token);
-          }
-
-          // Key format: YYYY/MM/DD/<messageId>/<filename>  **[extrapolation]**
-          const date = (msg.receivedDateTime || new Date().toISOString()).slice(0, 10);
-          const key = `${date}/${msg.id}/${att.name}`;
-
-          await putToR2(key, data!, att.contentType);
-          // Optionally log or emit an event
-          console.log(`Stored ${key} (${att.size} bytes)`);
-        }
-
-        // For itemAttachment (embedded emails), you may need to fetch the item’s MIME separately (fact)
-      }
-    }
-
-    // Acknowledge to Graph
+    console.log('Graph token acquired successfully');
+    
+    const processingPromises = body.value.map((n: any) => processNotification(n, token));
+    await Promise.all(processingPromises);
+    
+    console.log('Webhook processing completed successfully');
     return res.status(202).end();
   } catch (err: any) {
-    console.error(err);
+    console.error('❌ Webhook error:', err.message);
     // Return 202 so Graph doesn’t flood retries; log for investigation **[extrapolation]**
     return res.status(202).end();
   }

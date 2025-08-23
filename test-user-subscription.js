@@ -1,4 +1,4 @@
-// Create Microsoft Graph webhook subscription
+// Test subscription for a regular user mailbox (requires different permissions)
 require('dotenv').config();
 const { ConfidentialClientApplication } = require('@azure/msal-node');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
@@ -19,17 +19,18 @@ async function getGraphToken() {
   return result.accessToken;
 }
 
-async function createSubscription(webhookUrl) {
+async function createUserSubscription(webhookUrl, userEmail) {
   const token = await getGraphToken();
   
   const subscription = {
     changeType: 'created',
     notificationUrl: webhookUrl,
-    resource: `users/${encodeURIComponent(process.env.M365_SHARED_MAILBOX)}/messages`,
-    expirationDateTime: new Date(Date.now() + 3600000).toISOString()
+    resource: `users/${userEmail}/messages`,
+    expirationDateTime: new Date(Date.now() + 3600000).toISOString(), // 1 hour from now
+    clientState: process.env.GRAPH_WEBHOOK_CLIENT_STATE
   };
 
-  console.log('🔗 Creating Graph subscription...');
+  console.log('🔗 Creating Graph subscription for user...');
   console.log('Webhook URL:', webhookUrl);
   console.log('Resource:', subscription.resource);
   
@@ -45,7 +46,6 @@ async function createSubscription(webhookUrl) {
   if (!response.ok) {
     const error = await response.text();
     console.log('Full error response:', error);
-    console.log('Response headers:', Object.fromEntries(response.headers.entries()));
     throw new Error(`Failed to create subscription: ${response.status} ${error}`);
   }
 
@@ -57,22 +57,21 @@ async function createSubscription(webhookUrl) {
   return result;
 }
 
-// For local testing, you need a public URL (ngrok)
 const WEBHOOK_URL = process.argv[2];
+const USER_EMAIL = process.argv[3];
 
-if (!WEBHOOK_URL) {
-  console.log('❌ Usage: node create-subscription.js <webhook-url>');
+if (!WEBHOOK_URL || !USER_EMAIL) {
+  console.log('❌ Usage: node test-user-subscription.js <webhook-url> <user-email>');
   console.log('');
-  console.log('Examples:');
-  console.log('  node create-subscription.js https://abc123.ngrok.io/api/graph-webhook');
-  console.log('  node create-subscription.js https://your-app.vercel.app/api/graph-webhook');
+  console.log('Example:');
+  console.log('  node test-user-subscription.js https://your-app.vercel.app/api/graph-webhook user@domain.com');
   process.exit(1);
 }
 
-createSubscription(WEBHOOK_URL)
+createUserSubscription(WEBHOOK_URL, USER_EMAIL)
   .then(() => {
     console.log('');
-    console.log('🎯 Ready! Send an email to:', process.env.M365_SHARED_MAILBOX);
+    console.log('🎯 Ready! Send an email to:', USER_EMAIL);
     console.log('📧 Attachments will be stored in R2 bucket:', process.env.R2_BUCKET);
   })
   .catch(console.error);

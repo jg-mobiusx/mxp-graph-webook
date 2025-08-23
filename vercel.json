@@ -1,3 +1,7 @@
 {
-  "buildCommand": null
+  "functions": {
+    "api/graph-webhook.ts": {
+      "memory": 256
+    }
+  }
 }

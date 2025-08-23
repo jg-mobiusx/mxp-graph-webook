@@ -5,6 +5,9 @@
     "scripts": {
         "dev": "vercel dev"
     },
+    "engines": {
+        "node": "22.x"
+    },
     "dependencies": {
         "@aws-sdk/client-s3": "^3.620.0",
         "@azure/msal-node": "^2.6.6",
