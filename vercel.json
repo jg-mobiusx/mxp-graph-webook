@@ -1,7 +1,23 @@
 {
   "functions": {
-    "api/graph-webhook.ts": {
+    "api/ingest/graph-webhook.ts": {
       "memory": 256
+    },
+    "api/workers/process-queue.ts": {
+      "memory": 512
+    },
+    "api/management/renew-subscription.ts": {
+      "memory": 128
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/workers/process-queue",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/management/renew-subscription",
+      "schedule": "0 0 * * *"
+    }
+  ]
 }
